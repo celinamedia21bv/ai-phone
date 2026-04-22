@@ -21,16 +21,26 @@ app.get('/', (req, res) => {
 });
 
 app.post('/voice', (req, res) => {
-  const twiml = new VoiceResponse();
+  try {
+    console.log('POST /voice hit');
+    console.log('PUBLIC_HOST =', process.env.PUBLIC_HOST);
 
-  const connect = twiml.connect();
-  connect.conversationRelay({
-    url: `wss://${process.env.PUBLIC_HOST}/ws`,
-    welcomeGreeting: 'Hola, te habla JuegaPlus. ¿Te puedo hacer una pregunta rápida?'
-  });
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Connect>
+    <ConversationRelay
+      url="wss://${process.env.PUBLIC_HOST}/ws"
+      welcomeGreeting="Hola, te habla JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
+    />
+  </Connect>
+</Response>`;
 
-  res.type('text/xml');
-  res.send(twiml.toString());
+    res.type('text/xml');
+    res.send(twiml);
+  } catch (err) {
+    console.error('/voice error:', err);
+    res.status(500).send('voice route failed');
+  }
 });
 
 server.on('upgrade', (request, socket, head) => {
@@ -64,4 +74,4 @@ wss.on('connection', (ws) => {
   });
 });
 
-server.listen(3000);
+server.listen(process.env.PORT || 3000);
