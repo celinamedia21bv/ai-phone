@@ -54,23 +54,67 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 wss.on('connection', (ws) => {
-  ws.on('message', async (msg) => {
-    const data = JSON.parse(msg.toString());
+  console.log('Twilio WebSocket connected');
 
-    if (data.type === 'prompt') {
-      const userText = data.voicePrompt || '';
+  ws.on('message', async (msg) => {
+    try {
+      const data = JSON.parse(msg.toString());
+      console.log('WS IN:', JSON.stringify(data));
+
+      // Twilio ConversationRelay 会先发 setup
+      if (data.type === 'setup') {
+        return;
+      }
+
+      // 用户讲话后的主要事件
+      const userText =
+        data.voicePrompt ||
+        data.prompt ||
+        data.text ||
+        '';
+
+      if (!userText) {
+        console.log('No user text found in message');
+        return;
+      }
+
+      console.log('User said:', userText);
 
       const ai = await openai.responses.create({
         model: 'gpt-4.1-mini',
-        input: `Responde en español: ${userText}`
+        input: [
+          {
+            role: 'system',
+            content: 'Responde de forma breve y natural en español chileno. Eres un agente telefónico de JuegaPlus.'
+          },
+          {
+            role: 'user',
+            content: userText
+          }
+        ]
       });
+
+      const answer = ai.output_text?.trim() || 'Disculpa, ¿puedes repetirlo?';
+      console.log('AI answer:', answer);
 
       ws.send(JSON.stringify({
         type: 'text',
-        token: ai.output_text,
+        token: answer,
+        last: true
+      }));
+    } catch (err) {
+      console.error('WS error:', err);
+
+      ws.send(JSON.stringify({
+        type: 'text',
+        token: 'Disculpa, tuve un problema técnico. ¿Puedes repetirlo?',
         last: true
       }));
     }
+  });
+
+  ws.on('close', () => {
+    console.log('Twilio WebSocket disconnected');
   });
 });
 
