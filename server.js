@@ -39,11 +39,18 @@ app.post('/voice', (_req, res) => {
 <Response>
   <Connect>
     <ConversationRelay
-      url="wss://${PUBLIC_HOST}/ws"
+      url="wss://ai-phone-2s7t.onrender.com/ws"
       welcomeGreeting="Hola, te habla Valentina de JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
+      language="es-CL"
+      welcomeGreetingInterruptible="speech"
+      interruptible="speech"
+      reportInputDuringAgentSpeech="speech"
+      transcriptionProvider="Deepgram"
+      speechModel="nova-3-general"
+      debug="debugging speaker-events"
     />
   </Connect>
-</Response>`;
+</Response>
 
     res.type('text/xml');
     res.send(twiml);
@@ -109,8 +116,9 @@ wss.on('connection', (ws) => {
 
       // 初始连接事件
       if (data.type === 'setup') {
-        return;
-      }
+  console.log('ConversationRelay setup complete');
+  return;
+}
 
       // 打断事件先忽略
       if (data.type === 'interrupt') {
