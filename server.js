@@ -1,3 +1,4 @@
+
 import express from 'express';
 import http from 'http';
 import { WebSocketServer } from 'ws';
@@ -88,6 +89,7 @@ wss.on('connection', (ws) => {
     }, 1000);
   };
 
+  // 60秒自动结束（第二层保险）
   const timer = setTimeout(() => {
     console.log('Auto ending call (60s)');
     endCall('Gracias por tu tiempo. Hasta luego.');
@@ -105,10 +107,12 @@ wss.on('connection', (ws) => {
 
       if (callEnded) return;
 
+      // 初始连接事件
       if (data.type === 'setup') {
         return;
       }
 
+      // 打断事件先忽略
       if (data.type === 'interrupt') {
         return;
       }
