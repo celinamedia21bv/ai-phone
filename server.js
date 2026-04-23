@@ -98,9 +98,8 @@ wss.on('connection', (ws) => {
     }, 1000);
   };
 
-  // 60秒自动结束（第二层保险）
   const timer = setTimeout(() => {
-    console.log('Auto ending call (120s)');
+    console.log('Auto ending call (60s)');
     endCall('Gracias por tu tiempo. Hasta luego.');
   }, 60000);
 
@@ -116,13 +115,10 @@ wss.on('connection', (ws) => {
 
       if (callEnded) return;
 
-      // 初始连接事件
       if (data.type === 'setup') {
-  console.log('ConversationRelay setup complete');
-  return;
-}
+        return;
+      }
 
-      // 打断事件先忽略
       if (data.type === 'interrupt') {
         return;
       }
@@ -139,32 +135,39 @@ wss.on('connection', (ws) => {
       }
 
       console.log('User said:', userText);
-const normalized = userText.toLowerCase();
 
-// 如果用户表达兴趣 → 直接讲 promotion
-if (
-  normalized.includes('sí') ||
-  normalized.includes('si') ||
-  normalized.includes('claro') ||
-  normalized.includes('ok') ||
-  normalized.includes('vale') ||
-  normalized.includes('interesa')
-) {
-  safeSend(ws, {
-    type: 'text',
-    token: 'Perfecto. Actualmente podrías tener acceso a promociones activas, beneficios en recarga, free spins o campañas especiales disponibles dentro de tu cuenta de JuegaPlus. Si te interesa, puedo comunicarte con un asesor ahora mismo.',
-    last: true,
-  });
+      const normalized = userText.toLowerCase();
 
-  return;
-}
+      if (
+        introDone &&
+        !promotionExplained &&
+        (
+          normalized.includes('sí') ||
+          normalized.includes('si') ||
+          normalized.includes('claro') ||
+          normalized.includes('dime') ||
+          normalized.includes('ok') ||
+          normalized.includes('vale') ||
+          normalized.includes('interesa')
+        )
+      ) {
+        promotionExplained = true;
 
-const ai = await openai.responses.create({
-  model: 'gpt-4.1-mini',
-  input: [
-    {
-      role: 'system',
-      content: `
+        safeSend(ws, {
+          type: 'text',
+          token: 'Perfecto. Actualmente podrías tener acceso a promociones activas, beneficios en recarga, free spins o campañas especiales disponibles dentro de tu cuenta de JuegaPlus. Si te interesa, puedo comunicarte con un asesor ahora mismo.',
+          last: true,
+        });
+
+        return;
+      }
+
+      const ai = await openai.responses.create({
+        model: 'gpt-4.1-mini',
+        input: [
+          {
+            role: 'system',
+            content: `
 Eres un agente telefónico de ventas de JuegaPlus.
 Hablas en español chileno, natural, breve y amable.
 Tu tono debe sonar humano, no robótico.
@@ -183,66 +186,62 @@ PROMOCIÓN BASE:
 REGLAS:
 - No repitas la misma pregunta dos veces.
 - No vuelvas a presentarte.
-- Respuestas cortas (1–2 frases).
+- Respuestas cortas.
 - No prometas ganancias.
 - No expliques términos completos.
-- Si pregunta algo complejo (retiros, verificación, problemas), responde SOLO: TRANSFER_HUMAN
+- Si pregunta algo complejo, responde SOLO: TRANSFER_HUMAN
 
 IMPORTANTE:
 - TRANSFER_HUMAN → solo esa palabra
 - SEND_WHATSAPP → solo esa palabra
 - Todo lo demás → respuesta corta en español
-      `.trim()
-    },
-    {
-      role: 'user',
-      content: `
+            `.trim()
+          },
+          {
+            role: 'user',
+            content: `
 Estado actual:
 - introDone: ${introDone}
 - promotionExplained: ${promotionExplained}
 
 Mensaje del usuario:
 ${userText}
-      `.trim()
-    }
-  ]
-});
+            `.trim()
+          }
+        ]
+      });
 
-const answer = ai.output_text?.trim() || 'Disculpa, ¿puedes repetirlo?';
-console.log('AI answer:', answer);
+      const answer = ai.output_text?.trim() || 'Disculpa, ¿puedes repetirlo?';
+      console.log('AI answer:', answer);
 
-// 第一次开场后，标记已介绍
-if (!introDone) {
-  introDone = true;
-}
+      if (!introDone) {
+        introDone = true;
+      }
 
-// 转人工
-if (answer === 'TRANSFER_HUMAN') {
-  endCall('Perfecto, te comunico con un asesor ahora mismo.');
-  return;
-}
+      if (answer === 'TRANSFER_HUMAN') {
+        endCall('Perfecto, te comunico con un asesor ahora mismo.');
+        return;
+      }
 
-// 发送 WhatsApp
-if (answer === 'SEND_WHATSAPP') {
-  endCall('Perfecto, te enviaremos la información por WhatsApp en breve.');
-  return;
-}
+      if (answer === 'SEND_WHATSAPP') {
+        endCall('Perfecto, te enviaremos la información por WhatsApp en breve.');
+        return;
+      }
 
-// 如果回答里已经提到了 promoción / beneficios / free spins / recarga，就认为 promotion 已介绍
-if (
-  answer.toLowerCase().includes('promoción') ||
-  answer.toLowerCase().includes('beneficio') ||
-  answer.toLowerCase().includes('free spins') ||
-  answer.toLowerCase().includes('recarga')
-) {
-  promotionExplained = true;
-}
+      if (
+        answer.toLowerCase().includes('promoción') ||
+        answer.toLowerCase().includes('beneficio') ||
+        answer.toLowerCase().includes('free spins') ||
+        answer.toLowerCase().includes('recarga')
+      ) {
+        promotionExplained = true;
+      }
 
-safeSend(ws, {
-  type: 'text',
-  token: answer,
-  last: true,
-});
+      safeSend(ws, {
+        type: 'text',
+        token: answer,
+        last: true,
+      });
     } catch (err) {
       console.error('WS error:', err);
       safeSend(ws, {
