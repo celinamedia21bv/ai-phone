@@ -79,6 +79,8 @@ function safeSend(ws, payload) {
 wss.on('connection', (ws) => {
   console.log('Twilio WebSocket connected');
 
+  let introDone = false;
+  let promotionExplained = false;
   let callEnded = false;
 
   const endCall = (farewellText = 'Gracias por tu tiempo. Hasta luego.') => {
