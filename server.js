@@ -34,12 +34,17 @@ app.post('/voice', (_req, res) => {
     console.log('POST /voice hit');
     console.log('PUBLIC_HOST =', PUBLIC_HOST);
 
+app.post('/call-status', (req, res) => {
+  console.log('CALL STATUS CALLBACK:', JSON.stringify(req.body));
+  res.sendStatus(200);
+});
+
    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <ConversationRelay
       url="wss://${PUBLIC_HOST}/ws"
-      welcomeGreeting="Hola, te habla Valentina de JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
+      welcomeGreeting="Hola, te habla Valentina de JuegaPlus. Te llamo porque podrías tener promociones o beneficios disponibles en tu cuenta. ¿Te interesa que te lo explique en unos segundos?"
       language="es-CL"
       transcriptionProvider="Deepgram"
       speechModel="nova-3-general"
@@ -92,7 +97,7 @@ function extractUserText(data) {
 }
 
 function isPositiveReply(text) {
-  const normalized = text.toLowerCase();
+  const normalized = normalizeText(text);
   return (
     normalized === 'sí' ||
     normalized === 'si' ||
@@ -110,7 +115,7 @@ function isPositiveReply(text) {
 }
 
 function isNegativeReply(text) {
-  const normalized = text.toLowerCase();
+  const normalized = normalizeText(text);
   return (
     normalized === 'no' ||
     normalized.includes('no gracias') ||
@@ -124,7 +129,7 @@ function isNegativeReply(text) {
 }
 
 function soundsUnclear(text) {
-  const normalized = text.toLowerCase().trim();
+  const normalized = normalizeText(text).trim();
   return (
     normalized.length <= 1 ||
     normalized === 'ah' ||
@@ -135,12 +140,63 @@ function soundsUnclear(text) {
   );
 }
 
+function normalizeText(text) {
+  return (text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.,!?;:¡¿]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isEndCallReply(text) {
+  const normalized = normalizeText(text);
+  return (
+    normalized.includes('termina') ||
+    normalized.includes('corta') ||
+    normalized.includes('adios') ||
+    normalized.includes('chao') ||
+    normalized.includes('chau') ||
+    normalized.includes('bye') ||
+    normalized.includes('no quiero') ||
+    normalized.includes('no me interesa') ||
+    normalized.includes('no gracias')
+  );
+}
+
+function isConfusedReply(text) {
+  const normalized = normalizeText(text);
+  return (
+    normalized.includes('no entendi') ||
+    normalized.includes('no te entendi') ||
+    normalized.includes('que cosa') ||
+    normalized.includes('como') ||
+    normalized.includes('que dijiste') ||
+    normalized.includes('repite') ||
+    normalized.includes('no escuche')
+  );
+}
+
+function isInterestedAfterPromotion(text) {
+  const normalized = normalizeText(text);
+  return (
+    normalized.includes('me interesa') ||
+    normalized.includes('si quiero') ||
+    normalized.includes('quiero') ||
+    normalized.includes('dale') ||
+    normalized.includes('asesor') ||
+    normalized.includes('whatsapp')
+  );
+}
+
 wss.on('connection', (ws, request) => {
   console.log('Twilio WebSocket connected:', request?.url);
 
   let promotionExplained = false;
   let clarificationCount = 0;
   let callEnded = false;
+  let isProcessingTurn = false;
 
   const endCall = (farewellText = 'Gracias por tu tiempo. Hasta luego.') => {
     if (callEnded) return;
@@ -202,6 +258,32 @@ wss.on('connection', (ws, request) => {
 
       console.log('User said:', userText);
 
+      if (isProcessingTurn) {
+      console.log('Skipping prompt because already processing');
+      return;
+     }
+
+       isProcessingTurn = true;
+
+     if (isEndCallReply(userText)) {
+     endCall('Perfecto, gracias por tu tiempo. Que tengas un buen día.');
+     return;
+      }
+
+      if (isConfusedReply(userText)) {
+      safeSend(ws, {
+       type: 'text',
+      token: 'Claro. Te llamo de JuegaPlus porque podrías tener promociones o beneficios d         isponibles en tu cuenta. ¿Te interesa que te cuente?',
+    last: true,
+       });
+      return;
+       }
+
+       if (promotionExplained && isInterestedAfterPromotion(userText)) {
+       endCall('Perfecto, te comunico con un asesor ahora mismo.');
+       return;
+        }
+
       if (isNegativeReply(userText)) {
         endCall('Entiendo, muchas gracias por tu tiempo. Que estés muy bien.');
         return;
@@ -237,31 +319,54 @@ wss.on('connection', (ws, request) => {
           {
             role: 'system',
             content: `
-Eres un agente telefónico de ventas de JuegaPlus.
-Hablas en español chileno, natural, breve, amable y muy humano.
+Eres Valentina, una agente telefónica de JuegaPlus.
+
+Hablas en español chileno, de forma natural, breve, amable y humana.
+Tu objetivo es explicar en pocos segundos que el usuario podría tener promociones o beneficios disponibles en su cuenta JuegaPlus.
 
 CONTEXTO:
-- La bienvenida inicial ya fue dada por el sistema.
-- NO te presentes de nuevo.
-- NO repitas literalmente la pregunta inicial si el usuario ya respondió.
+- La bienvenida inicial ya fue dicha por el sistema.
+- No te presentes de nuevo.
+- No repitas frases largas.
+- No prometas ganancias.
+- No presiones al usuario.
+- No hables como robot.
 
-OBJETIVO:
-1. Continuar la conversación de forma breve.
-2. Si el usuario quiere detalles, explica brevemente la promoción.
-3. Si después de escuchar la promoción sigue interesado en saber más o hablar con alguien, responde SOLO: TRANSFER_HUMAN
-4. Si pide WhatsApp, responde SOLO: SEND_WHATSAPP
-5. Si el usuario claramente no tiene interés, responde con una despedida breve y amable en español.
-6. Si el mensaje del usuario es ambiguo, corto o poco claro, haz una sola pregunta corta de aclaración y NO cierres la llamada.
+OBJETIVO DE LA LLAMADA:
+1. Confirmar si el usuario quiere escuchar la información.
+2. Si acepta, explicar brevemente que podría tener promociones, beneficios de recarga, free spins o campañas disponibles.
+3. Si el usuario muestra interés después de escuchar la explicación, responde SOLO: TRANSFER_HUMAN
+4. Si el usuario pide WhatsApp, responde SOLO: SEND_WHATSAPP
+5. Si el usuario no entiende, repite de forma más simple.
+6. Si el usuario no quiere, responde SOLO: END_CALL
 
 PROMOCIÓN BASE:
-"Actualmente podrías tener acceso a promociones activas, beneficios en recarga, free spins o campañas especiales disponibles dentro de tu cuenta de JuegaPlus."
+"Podrías tener promociones activas, beneficios por recarga, free spins o campañas especiales disponibles dentro de tu cuenta JuegaPlus."
 
-REGLAS:
-- Respuestas cortas.
-- No prometas ganancias.
-- No uses lenguaje robótico.
-- No cierres la llamada salvo que el usuario deje claro que no le interesa.
-- Si pregunta algo complejo, responde SOLO: TRANSFER_HUMAN
+RESPUESTAS RECOMENDADAS:
+- Si dice "¿qué cosa?" o "no entendí":
+"Claro, te explico breve. Te llamo de JuegaPlus porque podrías tener beneficios o promociones disponibles en tu cuenta. ¿Te interesa que te cuente?"
+
+- Si dice "sí", "ok", "dime", "claro":
+"Perfecto. Podrías tener promociones activas, beneficios por recarga, free spins o campañas especiales en tu cuenta JuegaPlus."
+
+- Si pregunta "¿qué promoción?":
+"Depende de tu cuenta, pero puede incluir beneficios por recarga, free spins o campañas activas. Un asesor puede confirmártelo ahora."
+
+- Si pregunta algo complejo:
+TRANSFER_HUMAN
+
+- Si pide WhatsApp:
+SEND_WHATSAPP
+
+- Si dice "no", "no gracias", "no me interesa":
+END_CALL
+
+FORMATO:
+- Máximo 1 o 2 frases.
+- Nunca más de 20 palabras salvo que estés aclarando.
+- No uses emojis.
+- No inventes beneficios exactos.
             `.trim(),
           },
           {
@@ -285,13 +390,16 @@ ${userText}
       console.log('AI answer:', answer);
 
       if (answer === 'TRANSFER_HUMAN') {
-        endCall('Perfecto, te comunico con un asesor ahora mismo.');
-        return;
+       endCall('Perfecto, un asesor de JuegaPlus te contactará en breve. Gracias por tu tiempo.');
       }
 
       if (answer === 'SEND_WHATSAPP') {
         endCall('Perfecto, te enviaremos la información por WhatsApp en breve.');
         return;
+      }
+      if (answer === 'END_CALL') {
+       endCall('Entiendo, muchas gracias por tu tiempo. Que tengas un buen día.');
+       return;
       }
 
       if (
@@ -317,7 +425,8 @@ ${userText}
         token: 'Disculpa, tuve un problema técnico. ¿Te interesa que te lo explique muy breve?',
         last: true,
       });
-    }
+    }finally {
+    isProcessingTurn = false;
   });
 });
 
