@@ -91,7 +91,7 @@ wss.on('connection', (ws) => {
 
   // 60秒自动结束（第二层保险）
   const timer = setTimeout(() => {
-    console.log('Auto ending call (60s)');
+    console.log('Auto ending call (120s)');
     endCall('Gracias por tu tiempo. Hasta luego.');
   }, 60000);
 
@@ -129,81 +129,110 @@ wss.on('connection', (ws) => {
       }
 
       console.log('User said:', userText);
+const normalized = userText.toLowerCase();
+
+// 如果用户表达兴趣 → 直接讲 promotion
+if (
+  normalized.includes('sí') ||
+  normalized.includes('si') ||
+  normalized.includes('claro') ||
+  normalized.includes('ok') ||
+  normalized.includes('vale') ||
+  normalized.includes('interesa')
+) {
+  safeSend(ws, {
+    type: 'text',
+    token: 'Perfecto. Actualmente podrías tener acceso a promociones activas, beneficios en recarga, free spins o campañas especiales disponibles dentro de tu cuenta de JuegaPlus. Si te interesa, puedo comunicarte con un asesor ahora mismo.',
+    last: true,
+  });
+
+  return;
+}
 
       const ai = await openai.responses.create({
-        model: 'gpt-4.1-mini',
-        input: [
-          {
-            role: 'system',
-            content: `
+  model: 'gpt-4.1-mini',
+  input: [
+    {
+      role: 'system',
+      content: `
 Eres un agente telefónico de ventas de JuegaPlus.
 Hablas en español chileno, natural, breve y amable.
 Tu tono debe sonar humano, no robótico.
 
-OBJETIVO:
-1. Presentarte brevemente.
-2. Confirmar si la persona tiene interés en conocer promociones o beneficios disponibles.
-3. Si la persona muestra interés claro, responde exactamente con la palabra: TRANSFER_HUMAN
-4. Si la persona pide información por WhatsApp, responde exactamente con la palabra: SEND_WHATSAPP
-5. Si la persona no tiene interés, despídete de forma breve y amable.
-6. Si la persona no entiende, repite con otras palabras, pero siempre breve.
+OBJETIVO DE LA LLAMADA:
+1. Presentarte solo una vez.
+2. Preguntar si la persona tiene interés en conocer promociones o beneficios.
+3. Si la persona dice que sí o muestra interés, primero explica brevemente la promoción disponible.
+4. Solo después de explicar la promoción, si la persona sigue interesada, responde exactamente: TRANSFER_HUMAN
+5. Si la persona pide información por WhatsApp, responde exactamente: SEND_WHATSAPP
+6. Si la persona no tiene interés, despídete de forma breve y amable.
+
+PROMOCIÓN BASE:
+Puedes mencionar algo como:
+"Actualmente podrías tener acceso a promociones activas, beneficios en recarga, free spins o campañas especiales disponibles dentro de tu cuenta de JuegaPlus."
 
 REGLAS:
-- No des respuestas largas.
-- No expliques términos y condiciones completos.
+- No repitas la misma pregunta dos veces seguidas.
+- No vuelvas a presentarte en cada turno.
+- Si la persona ya dijo que sí, no preguntes otra vez si tiene interés; pasa a explicar la promoción.
+- Si la persona ya recibió una explicación y sigue interesada, responde SOLO: TRANSFER_HUMAN
+- Si pide WhatsApp, responde SOLO: SEND_WHATSAPP
+- Si no entiendes bien, haz una sola pregunta corta de aclaración.
+- Mantén las respuestas cortas, de una o dos frases.
 - No prometas ganancias.
-- No hables como soporte técnico.
-- No inventes promociones específicas si no te las preguntan.
-- No uses lenguaje agresivo ni insistente.
-- Si la persona está ocupada, ofrece volver a contactar más tarde o enviar WhatsApp.
-- Si la persona pregunta algo complejo sobre retiros, verificación, depósitos o problemas de cuenta, responde exactamente: TRANSFER_HUMAN
-- Siempre intenta mantener la conversación corta.
+- No expliques términos y condiciones completos.
+- Si pregunta algo complejo de retiros, verificación, depósitos o problemas de cuenta, responde SOLO: TRANSFER_HUMAN
+      `.trim()
+    },
+    {
+      role: 'user',
+      content: `
+Estado actual:
+- introDone: ${introDone}
+- promotionExplained: ${promotionExplained}
 
-GUION BASE:
-- Saludo inicial:
-  "Hola, te habla Valentina de JuegaPlus. Te llamo muy breve para comentarte que podrías tener beneficios o promociones disponibles. ¿Te interesa que te cuente rápidamente?"
-- Si dice sí / claro / dime / ok:
-  Responde exactamente: TRANSFER_HUMAN
-- Si dice WhatsApp / mándame la info / envíamelo:
-  Responde exactamente: SEND_WHATSAPP
-- Si dice no / no me interesa / no gracias:
-  "Perfecto, gracias por tu tiempo. Que tengas un buen día."
-- Si dice ahora no puedo:
-  "Entiendo. Si quieres, podemos contactarte más tarde o enviarte la información por WhatsApp."
-- Si no se entiende:
-  "Disculpa, solo quería comentarte que podrías tener beneficios disponibles en JuegaPlus. ¿Te interesa recibir información?"
+Mensaje del usuario:
+${userText}
+      `.trim()
+    }
+  ]
+});
 
-IMPORTANTE:
-- Cuando debas transferir a una persona, responde SOLO: TRANSFER_HUMAN
-- Cuando debas enviar WhatsApp, responde SOLO: SEND_WHATSAPP
-- En cualquier otra situación, responde en español chileno y en una sola frase breve.
-            `.trim(),
-          },
-          {
-            role: 'user',
-            content: userText,
-          },
-        ],
-      });
+const answer = ai.output_text?.trim() || 'Disculpa, ¿puedes repetirlo?';
+console.log('AI answer:', answer);
 
-      const answer = ai.output_text?.trim() || 'Disculpa, ¿puedes repetirlo?';
-      console.log('AI answer:', answer);
+// 第一次开场后，标记已介绍
+if (!introDone) {
+  introDone = true;
+}
 
-      if (answer === 'TRANSFER_HUMAN') {
-        endCall('Perfecto, te comunico con un asesor ahora mismo.');
-        return;
-      }
+// 转人工
+if (answer === 'TRANSFER_HUMAN') {
+  endCall('Perfecto, te comunico con un asesor ahora mismo.');
+  return;
+}
 
-      if (answer === 'SEND_WHATSAPP') {
-        endCall('Perfecto, te enviaremos la información por WhatsApp en breve.');
-        return;
-      }
+// 发送 WhatsApp
+if (answer === 'SEND_WHATSAPP') {
+  endCall('Perfecto, te enviaremos la información por WhatsApp en breve.');
+  return;
+}
 
-      safeSend(ws, {
-        type: 'text',
-        token: answer,
-        last: true,
-      });
+// 如果回答里已经提到了 promoción / beneficios / free spins / recarga，就认为 promotion 已介绍
+if (
+  answer.toLowerCase().includes('promoción') ||
+  answer.toLowerCase().includes('beneficio') ||
+  answer.toLowerCase().includes('free spins') ||
+  answer.toLowerCase().includes('recarga')
+) {
+  promotionExplained = true;
+}
+
+safeSend(ws, {
+  type: 'text',
+  token: answer,
+  last: true,
+});
     } catch (err) {
       console.error('WS error:', err);
       safeSend(ws, {
