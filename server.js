@@ -39,7 +39,7 @@ app.post('/voice', (_req, res) => {
 <Response>
   <Connect>
     <ConversationRelay
-      url="wss://ai-phone-2s7t.onrender.com/ws"
+      url="wss://${PUBLIC_HOST}/ws"
       welcomeGreeting="Hola, te habla Valentina de JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
       language="es-CL"
       welcomeGreetingInterruptible="speech"
@@ -50,7 +50,7 @@ app.post('/voice', (_req, res) => {
       debug="debugging speaker-events"
     />
   </Connect>
-</Response>
+</Response>`;
 
     res.type('text/xml');
     res.send(twiml);
@@ -99,9 +99,9 @@ wss.on('connection', (ws) => {
   };
 
   const timer = setTimeout(() => {
-    console.log('Auto ending call (60s)');
+    console.log('Auto ending call (120s)');
     endCall('Gracias por tu tiempo. Hasta luego.');
-  }, 60000);
+  }, 120000);
 
   ws.on('close', () => {
     clearTimeout(timer);
