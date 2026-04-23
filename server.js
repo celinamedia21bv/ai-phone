@@ -34,20 +34,18 @@ app.post('/voice', (_req, res) => {
     console.log('POST /voice hit');
     console.log('PUBLIC_HOST =', PUBLIC_HOST);
 
-    // 先用最简 ConversationRelay，优先确认 /ws 能连上
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <ConversationRelay
-  url="wss://${PUBLIC_HOST}/ws"
-  welcomeGreeting="Hola, te habla Valentina de JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
-  language="es-CL"
-  transcriptionProvider="Deepgram"
-  speechModel="nova-3-general"
-  ttsProvider="ElevenLabs"
-  voice="Bella"
-  interruptible="speech"
-/>
+      url="wss://${PUBLIC_HOST}/ws"
+      welcomeGreeting="Hola, te habla Valentina de JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
+      language="es-CL"
+      transcriptionProvider="Deepgram"
+      speechModel="nova-3-general"
+      ttsProvider="ElevenLabs"
+      interruptible="speech"
+    />
   </Connect>
 </Response>`;
 
