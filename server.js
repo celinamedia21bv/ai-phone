@@ -162,12 +162,12 @@ wss.on('connection', (ws) => {
         return;
       }
 
-      const ai = await openai.responses.create({
-        model: 'gpt-4.1-mini',
-        input: [
-          {
-            role: 'system',
-            content: `
+const ai = await openai.responses.create({
+  model: 'gpt-4.1-mini',
+  input: [
+    {
+      role: 'system',
+      content: `
 Eres un agente telefónico de ventas de JuegaPlus.
 Hablas en español chileno, natural, breve y amable.
 Tu tono debe sonar humano, no robótico.
@@ -195,21 +195,21 @@ IMPORTANTE:
 - TRANSFER_HUMAN → solo esa palabra
 - SEND_WHATSAPP → solo esa palabra
 - Todo lo demás → respuesta corta en español
-            `.trim()
-          },
-          {
-            role: 'user',
-            content: `
+      `.trim()
+    },
+    {
+      role: 'user',
+      content: `
 Estado actual:
 - introDone: ${introDone}
 - promotionExplained: ${promotionExplained}
 
 Mensaje del usuario:
 ${userText}
-            `.trim()
-          }
-        ]
-      });
+      `.trim()
+    }
+  ]
+});
 
       const answer = ai.output_text?.trim() || 'Disculpa, ¿puedes repetirlo?';
       console.log('AI answer:', answer);
