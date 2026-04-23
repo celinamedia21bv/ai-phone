@@ -141,41 +141,29 @@ function soundsUnclear(text) {
 wss.on('connection', (ws, request) => {
   console.log('Twilio WebSocket connected:', request?.url);
 
-  let introDone = true; // welcomeGreeting 已经说过
-  let promotionExplained = false;
-  let clarificationCount = 0;
-  let callEnded = false;
+  ws.on('message', (msg) => {
+    try {
+      const raw = msg.toString();
+      console.log('RAW WS MESSAGE:', raw);
 
-  const endCall = (farewellText = 'Gracias por tu tiempo. Hasta luego.') => {
-    if (callEnded) return;
-    callEnded = true;
-
-    console.log('Ending call with:', farewellText);
-
-    safeSend(ws, {
-      type: 'text',
-      token: farewellText,
-      last: true,
-    });
-
-    setTimeout(() => {
-      safeSend(ws, { type: 'end' });
-    }, 1000);
-  };
-
-  const timer = setTimeout(() => {
-    console.log('Auto ending call after 120 seconds');
-    endCall('Gracias por tu tiempo. Hasta luego.');
-  }, 120000);
+      safeSend(ws, {
+        type: 'text',
+        token: 'Te escucho perfectamente.',
+        last: true,
+      });
+    } catch (err) {
+      console.error('WS error:', err);
+    }
+  });
 
   ws.on('close', () => {
-    clearTimeout(timer);
     console.log('Twilio WebSocket disconnected');
   });
 
   ws.on('error', (err) => {
     console.error('WebSocket error:', err);
   });
+});
 
   ws.on('message', async (msg) => {
     try {
