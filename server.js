@@ -1,7 +1,6 @@
-
 import express from 'express';
 import http from 'http';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, WebSocket } from 'ws';
 import OpenAI from 'openai';
 
 const app = express();
@@ -12,16 +11,7 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_HOST = process.env.PUBLIC_HOST;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-if (!PUBLIC_HOST) {
-  console.error('Missing PUBLIC_HOST');
-}
-if (!OPENAI_API_KEY) {
-  console.error('Missing OPENAI_API_KEY');
-}
-
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -31,11 +21,7 @@ app.get('/', (_req, res) => {
 });
 
 app.post('/voice', (_req, res) => {
-  try {
-    console.log('POST /voice hit');
-    console.log('PUBLIC_HOST =', PUBLIC_HOST);
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <ConversationRelay
@@ -52,18 +38,13 @@ app.post('/voice', (_req, res) => {
   </Connect>
 </Response>`;
 
-    res.type('text/xml');
-    res.send(twiml);
-  } catch (err) {
-    console.error('/voice error:', err);
-    res.status(500).send('voice route failed');
-  }
+  res.type('text/xml').send(twiml);
 });
 
 server.on('upgrade', (request, socket, head) => {
   if (request.url === '/ws') {
     wss.handleUpgrade(request, socket, head, (ws) => {
-      wss.emit('connection', ws);
+      wss.emit('connection', ws, request);
     });
   } else {
     socket.destroy();
@@ -71,7 +52,7 @@ server.on('upgrade', (request, socket, head) => {
 });
 
 function safeSend(ws, payload) {
-  if (ws.readyState === ws.OPEN) {
+  if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(payload));
   }
 }
@@ -79,7 +60,7 @@ function safeSend(ws, payload) {
 wss.on('connection', (ws) => {
   console.log('Twilio WebSocket connected');
 
-  let introDone = false;
+  let introDone = true; // welcomeGreeting 已经说过了
   let promotionExplained = false;
   let callEnded = false;
 
@@ -99,8 +80,7 @@ wss.on('connection', (ws) => {
   };
 
   const timer = setTimeout(() => {
-    console.log('Auto ending call (120s)');
-    endCall('Gracias por tu tiempo. Hasta luego.');
+    endCall();
   }, 120000);
 
   ws.on('close', () => {
@@ -115,31 +95,28 @@ wss.on('connection', (ws) => {
 
       if (callEnded) return;
 
-      if (data.type === 'setup') {
-        return;
-      }
+      if (data.type === 'setup') return;
+      if (data.type === 'interrupt') return;
 
-      if (data.type === 'interrupt') {
-        return;
-      }
+      const userText = data.voicePrompt || data.prompt || data.text || '';
+      if (!userText) return;
 
-      const userText =
-        data.voicePrompt ||
-        data.prompt ||
-        data.text ||
-        '';
+      const normalized = userText.toLowerCase().trim();
 
-      if (!userText) {
-        console.log('No user text found in message');
-        return;
-      }
-
-      console.log('User said:', userText);
-
-      const normalized = userText.toLowerCase();
-
+      // 明确拒绝
       if (
-        introDone &&
+        normalized.includes('no gracias') ||
+        normalized.includes('no me interesa') ||
+        normalized === 'no' ||
+        normalized.includes('ahora no') ||
+        normalized.includes('después')
+      ) {
+        endCall('Entiendo, muchas gracias por tu tiempo. Que estés muy bien.');
+        return;
+      }
+
+      // 明确同意，且尚未讲过 promotion
+      if (
         !promotionExplained &&
         (
           normalized.includes('sí') ||
@@ -152,71 +129,58 @@ wss.on('connection', (ws) => {
         )
       ) {
         promotionExplained = true;
-
         safeSend(ws, {
           type: 'text',
           token: 'Perfecto. Actualmente podrías tener acceso a promociones activas, beneficios en recarga, free spins o campañas especiales disponibles dentro de tu cuenta de JuegaPlus. Si te interesa, puedo comunicarte con un asesor ahora mismo.',
           last: true,
         });
-
         return;
       }
 
-const ai = await openai.responses.create({
-  model: 'gpt-4.1-mini',
-  input: [
-    {
-      role: 'system',
-      content: `
+      const ai = await openai.responses.create({
+        model: 'gpt-4.1-mini',
+        input: [
+          {
+            role: 'system',
+            content: `
 Eres un agente telefónico de ventas de JuegaPlus.
 Hablas en español chileno, natural, breve y amable.
-Tu tono debe sonar humano, no robótico.
+
+La bienvenida inicial ya fue dada por el sistema.
+NO te presentes de nuevo.
+NO repitas la pregunta inicial si el usuario ya respondió.
 
 OBJETIVO:
-1. Presentarte solo una vez.
-2. Preguntar si la persona tiene interés en conocer promociones o beneficios.
-3. Si la persona dice que sí, explica brevemente la promoción.
-4. Si después de escuchar la promoción sigue interesada, responde SOLO: TRANSFER_HUMAN
-5. Si pide WhatsApp, responde SOLO: SEND_WHATSAPP
-6. Si no tiene interés, despídete de forma breve.
+1. Continuar la conversación de forma breve.
+2. Si el usuario quiere detalles, explica brevemente la promoción.
+3. Si después sigue interesado, responde SOLO: TRANSFER_HUMAN
+4. Si pide WhatsApp, responde SOLO: SEND_WHATSAPP
+5. Si no tiene interés, despídete brevemente.
 
 PROMOCIÓN BASE:
 "Actualmente podrías tener acceso a promociones activas, beneficios en recarga, free spins o campañas especiales disponibles dentro de tu cuenta de JuegaPlus."
 
 REGLAS:
-- No repitas la misma pregunta dos veces.
-- No vuelvas a presentarte.
 - Respuestas cortas.
 - No prometas ganancias.
-- No expliques términos completos.
 - Si pregunta algo complejo, responde SOLO: TRANSFER_HUMAN
-
-IMPORTANTE:
-- TRANSFER_HUMAN → solo esa palabra
-- SEND_WHATSAPP → solo esa palabra
-- Todo lo demás → respuesta corta en español
-      `.trim()
-    },
-    {
-      role: 'user',
-      content: `
+            `.trim()
+          },
+          {
+            role: 'user',
+            content: `
 Estado actual:
 - introDone: ${introDone}
 - promotionExplained: ${promotionExplained}
 
 Mensaje del usuario:
 ${userText}
-      `.trim()
-    }
-  ]
-});
+            `.trim()
+          }
+        ]
+      });
 
       const answer = ai.output_text?.trim() || 'Disculpa, ¿puedes repetirlo?';
-      console.log('AI answer:', answer);
-
-      if (!introDone) {
-        introDone = true;
-      }
 
       if (answer === 'TRANSFER_HUMAN') {
         endCall('Perfecto, te comunico con un asesor ahora mismo.');
