@@ -39,10 +39,15 @@ app.post('/voice', (_req, res) => {
 <Response>
   <Connect>
     <ConversationRelay
-      url="wss://${PUBLIC_HOST}/ws"
-      welcomeGreeting="Hola, te habla Valentina de JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
-      language="es-CL"
-    />
+  url="wss://${PUBLIC_HOST}/ws"
+  welcomeGreeting="Hola, te habla Valentina de JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
+  language="es-CL"
+  transcriptionProvider="Deepgram"
+  speechModel="nova-3-general"
+  ttsProvider="ElevenLabs"
+  voice="Bella"
+  interruptible="speech"
+/>
   </Connect>
 </Response>`;
 
