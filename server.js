@@ -81,37 +81,104 @@ wss.on('connection', (ws) => {
       console.log('User said:', userText);
 
       const ai = await openai.responses.create({
-        model: 'gpt-4.1-mini',
-        input: [
-          {
-            role: 'system',
-            content: 'Responde de forma breve y natural en español chileno. Eres un agente telefónico de JuegaPlus.'
-          },
-          {
-            role: 'user',
-            content: userText
-          }
-        ]
-      });
+  model: 'gpt-4.1-mini',
+  input: [
+    {
+      role: 'system',
+      content: `
+Eres un agente telefónico de ventas de JuegaPlus.
+Hablas en español chileno, natural, breve y amable.
+Tu tono debe sonar humano, no robótico.
+
+OBJETIVO:
+1. Presentarte brevemente.
+2. Confirmar si la persona tiene interés en conocer promociones o beneficios disponibles.
+3. Si la persona muestra interés claro, responde exactamente con la palabra: TRANSFER_HUMAN
+4. Si la persona pide información por WhatsApp, responde exactamente con la palabra: SEND_WHATSAPP
+5. Si la persona no tiene interés, despídete de forma breve y amable.
+6. Si la persona no entiende, repite con otras palabras, pero siempre breve.
+
+REGLAS:
+- No des respuestas largas.
+- No expliques términos y condiciones completos.
+- No prometas ganancias.
+- No hables como soporte técnico.
+- No inventes promociones específicas si no te las preguntan.
+- No uses lenguaje agresivo ni insistente.
+- Si la persona está ocupada, ofrece volver a contactar más tarde o enviar WhatsApp.
+- Si la persona pregunta algo complejo sobre retiros, verificación, depósitos o problemas de cuenta, responde exactamente: TRANSFER_HUMAN
+- Siempre intenta mantener la conversación corta.
+
+GUION BASE:
+- Saludo inicial:
+  "Hola, te habla Valentina de JuegaPlus. Te llamo muy breve para comentarte que podrías tener beneficios o promociones disponibles. ¿Te interesa que te cuente rápidamente?"
+- Si dice sí / claro / dime / ok:
+  Responde exactamente: TRANSFER_HUMAN
+- Si dice WhatsApp / mándame la info / envíamelo:
+  Responde exactamente: SEND_WHATSAPP
+- Si dice no / no me interesa / no gracias:
+  "Perfecto, gracias por tu tiempo. Que tengas un buen día."
+- Si dice ahora no puedo:
+  "Entiendo. Si quieres, podemos contactarte más tarde o enviarte la información por WhatsApp."
+- Si no se entiende:
+  "Disculpa, solo quería comentarte que podrías tener beneficios disponibles en JuegaPlus. ¿Te interesa recibir información?"
+
+IMPORTANTE:
+- Cuando debas transferir a una persona, responde SOLO: TRANSFER_HUMAN
+- Cuando debas enviar WhatsApp, responde SOLO: SEND_WHATSAPP
+- En cualquier otra situación, responde en español chileno y en una sola frase breve.
+      `.trim()
+    },
+    {
+      role: 'user',
+      content: userText
+    }
+  ]
+});
 
       const answer = ai.output_text?.trim() || 'Disculpa, ¿puedes repetirlo?';
-      console.log('AI answer:', answer);
+console.log('AI answer:', answer);
 
-      ws.send(JSON.stringify({
-        type: 'text',
-        token: answer,
-        last: true
-      }));
-    } catch (err) {
-      console.error('WS error:', err);
+// 转人工
+if (answer === 'TRANSFER_HUMAN') {
+  ws.send(JSON.stringify({
+    type: 'text',
+    token: 'Perfecto, te comunico con un asesor ahora mismo.',
+    last: true
+  }));
 
-      ws.send(JSON.stringify({
-        type: 'text',
-        token: 'Disculpa, tuve un problema técnico. ¿Puedes repetirlo?',
-        last: true
-      }));
-    }
-  });
+  setTimeout(() => {
+    ws.send(JSON.stringify({
+      type: 'end'
+    }));
+  }, 1200);
+
+  return;
+}
+
+// 发送 WhatsApp
+if (answer === 'SEND_WHATSAPP') {
+  ws.send(JSON.stringify({
+    type: 'text',
+    token: 'Perfecto, te enviaremos la información por WhatsApp en breve.',
+    last: true
+  }));
+
+  setTimeout(() => {
+    ws.send(JSON.stringify({
+      type: 'end'
+    }));
+  }, 1200);
+
+  return;
+}
+
+// 正常回复
+ws.send(JSON.stringify({
+  type: 'text',
+  token: answer,
+  last: true
+}));
 
   ws.on('close', () => {
     console.log('Twilio WebSocket disconnected');
