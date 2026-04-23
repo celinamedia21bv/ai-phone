@@ -34,6 +34,7 @@ app.post('/voice', (_req, res) => {
     console.log('POST /voice hit');
     console.log('PUBLIC_HOST =', PUBLIC_HOST);
 
+    // 先用最简 ConversationRelay，优先确认 /ws 能连上
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
@@ -41,12 +42,6 @@ app.post('/voice', (_req, res) => {
       url="wss://${PUBLIC_HOST}/ws"
       welcomeGreeting="Hola, te habla Valentina de JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
       language="es-CL"
-      welcomeGreetingInterruptible="speech"
-      interruptible="speech"
-      reportInputDuringAgentSpeech="speech"
-      transcriptionProvider="Deepgram"
-      speechModel="nova-3-general"
-      debug="debugging speaker-events"
     />
   </Connect>
 </Response>`;
@@ -107,7 +102,6 @@ function isPositiveReply(text) {
     normalized.includes('vale') ||
     normalized.includes('dime') ||
     normalized.includes('cuéntame') ||
-    normalized.includes('cuento') ||
     normalized.includes('interesa')
   );
 }
@@ -141,29 +135,40 @@ function soundsUnclear(text) {
 wss.on('connection', (ws, request) => {
   console.log('Twilio WebSocket connected:', request?.url);
 
-  ws.on('message', (msg) => {
-    try {
-      const raw = msg.toString();
-      console.log('RAW WS MESSAGE:', raw);
+  let promotionExplained = false;
+  let clarificationCount = 0;
+  let callEnded = false;
 
-      safeSend(ws, {
-        type: 'text',
-        token: 'Te escucho perfectamente.',
-        last: true,
-      });
-    } catch (err) {
-      console.error('WS error:', err);
-    }
-  });
+  const endCall = (farewellText = 'Gracias por tu tiempo. Hasta luego.') => {
+    if (callEnded) return;
+    callEnded = true;
+
+    console.log('Ending call with:', farewellText);
+
+    safeSend(ws, {
+      type: 'text',
+      token: farewellText,
+      last: true,
+    });
+
+    setTimeout(() => {
+      safeSend(ws, { type: 'end' });
+    }, 1000);
+  };
+
+  const timer = setTimeout(() => {
+    console.log('Auto ending call after 120 seconds');
+    endCall('Gracias por tu tiempo. Hasta luego.');
+  }, 120000);
 
   ws.on('close', () => {
+    clearTimeout(timer);
     console.log('Twilio WebSocket disconnected');
   });
 
   ws.on('error', (err) => {
     console.error('WebSocket error:', err);
   });
-});
 
   ws.on('message', async (msg) => {
     try {
@@ -194,15 +199,11 @@ wss.on('connection', (ws, request) => {
 
       console.log('User said:', userText);
 
-      const normalized = userText.toLowerCase().trim();
-
-      // 用户明确拒绝
       if (isNegativeReply(userText)) {
         endCall('Entiendo, muchas gracias por tu tiempo. Que estés muy bien.');
         return;
       }
 
-      // 用户明确感兴趣，直接讲 promotion
       if (!promotionExplained && isPositiveReply(userText)) {
         promotionExplained = true;
 
@@ -215,7 +216,6 @@ wss.on('connection', (ws, request) => {
         return;
       }
 
-      // 首轮或模糊输入时，不直接 goodbye，先澄清一次
       if (soundsUnclear(userText) && clarificationCount < 1) {
         clarificationCount += 1;
 
@@ -265,7 +265,6 @@ REGLAS:
             role: 'user',
             content: `
 Estado actual:
-- introDone: ${introDone}
 - promotionExplained: ${promotionExplained}
 - clarificationCount: ${clarificationCount}
 
@@ -276,7 +275,10 @@ ${userText}
         ],
       });
 
-      const answer = ai.output_text?.trim() || 'Disculpa, ¿te interesa que te cuente una promoción breve?';
+      const answer =
+        ai.output_text?.trim() ||
+        'Disculpa, ¿te interesa que te cuente una promoción breve?';
+
       console.log('AI answer:', answer);
 
       if (answer === 'TRANSFER_HUMAN') {
