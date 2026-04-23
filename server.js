@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -29,17 +30,17 @@ app.get('/', (_req, res) => {
   res.send('AI Phone Server Running 🚀');
 });
 
-app.post('/voice', (_req, res) => {
-  try {
-    console.log('POST /voice hit');
-    console.log('PUBLIC_HOST =', PUBLIC_HOST);
-
 app.post('/call-status', (req, res) => {
   console.log('CALL STATUS CALLBACK:', JSON.stringify(req.body));
   res.sendStatus(200);
 });
 
-   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+app.post('/voice', (_req, res) => {
+  try {
+    console.log('POST /voice hit');
+    console.log('PUBLIC_HOST =', PUBLIC_HOST);
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <ConversationRelay
@@ -389,9 +390,10 @@ ${userText}
 
       console.log('AI answer:', answer);
 
-      if (answer === 'TRANSFER_HUMAN') {
-       endCall('Perfecto, un asesor de JuegaPlus te contactará en breve. Gracias por tu tiempo.');
-      }
+       if (answer === 'TRANSFER_HUMAN') {
+        endCall('Perfecto, un asesor de JuegaPlus te contactará en breve. Gracias por tu   tiempo.');
+       return;
+        }
 
       if (answer === 'SEND_WHATSAPP') {
         endCall('Perfecto, te enviaremos la información por WhatsApp en breve.');
@@ -425,8 +427,9 @@ ${userText}
         token: 'Disculpa, tuve un problema técnico. ¿Te interesa que te lo explique muy breve?',
         last: true,
       });
-    }finally {
-    isProcessingTurn = false;
+    } finally {
+      isProcessingTurn = false;
+    }
   });
 });
 
