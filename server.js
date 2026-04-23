@@ -2,35 +2,44 @@ import express from 'express';
 import http from 'http';
 import { WebSocketServer } from 'ws';
 import OpenAI from 'openai';
-import twilio from 'twilio';
 
 const app = express();
 const server = http.createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
+const PORT = process.env.PORT || 3000;
+const PUBLIC_HOST = process.env.PUBLIC_HOST;
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
+if (!PUBLIC_HOST) {
+  console.error('Missing PUBLIC_HOST');
+}
+if (!OPENAI_API_KEY) {
+  console.error('Missing OPENAI_API_KEY');
+}
+
 const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
+  apiKey: OPENAI_API_KEY,
 });
 
-const VoiceResponse = twilio.twiml.VoiceResponse;
-
 app.use(express.urlencoded({ extended: true }));
+app.use(express.json());
 
-app.get('/', (req, res) => {
+app.get('/', (_req, res) => {
   res.send('AI Phone Server Running 🚀');
 });
 
-app.post('/voice', (req, res) => {
+app.post('/voice', (_req, res) => {
   try {
     console.log('POST /voice hit');
-    console.log('PUBLIC_HOST =', process.env.PUBLIC_HOST);
+    console.log('PUBLIC_HOST =', PUBLIC_HOST);
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Connect>
     <ConversationRelay
-      url="wss://${process.env.PUBLIC_HOST}/ws"
-      welcomeGreeting="Hola, te habla JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
+      url="wss://${PUBLIC_HOST}/ws"
+      welcomeGreeting="Hola, te habla Valentina de JuegaPlus. ¿Te puedo hacer una pregunta rápida?"
     />
   </Connect>
 </Response>`;
@@ -53,20 +62,57 @@ server.on('upgrade', (request, socket, head) => {
   }
 });
 
+function safeSend(ws, payload) {
+  if (ws.readyState === ws.OPEN) {
+    ws.send(JSON.stringify(payload));
+  }
+}
+
 wss.on('connection', (ws) => {
   console.log('Twilio WebSocket connected');
+
+  let callEnded = false;
+
+  const endCall = (farewellText = 'Gracias por tu tiempo. Hasta luego.') => {
+    if (callEnded) return;
+    callEnded = true;
+
+    safeSend(ws, {
+      type: 'text',
+      token: farewellText,
+      last: true,
+    });
+
+    setTimeout(() => {
+      safeSend(ws, { type: 'end' });
+    }, 1000);
+  };
+
+  const timer = setTimeout(() => {
+    console.log('Auto ending call (60s)');
+    endCall('Gracias por tu tiempo. Hasta luego.');
+  }, 60000);
+
+  ws.on('close', () => {
+    clearTimeout(timer);
+    console.log('Twilio WebSocket disconnected');
+  });
 
   ws.on('message', async (msg) => {
     try {
       const data = JSON.parse(msg.toString());
       console.log('WS IN:', JSON.stringify(data));
 
-      // Twilio ConversationRelay 会先发 setup
+      if (callEnded) return;
+
       if (data.type === 'setup') {
         return;
       }
 
-      // 用户讲话后的主要事件
+      if (data.type === 'interrupt') {
+        return;
+      }
+
       const userText =
         data.voicePrompt ||
         data.prompt ||
@@ -81,11 +127,11 @@ wss.on('connection', (ws) => {
       console.log('User said:', userText);
 
       const ai = await openai.responses.create({
-  model: 'gpt-4.1-mini',
-  input: [
-    {
-      role: 'system',
-      content: `
+        model: 'gpt-4.1-mini',
+        input: [
+          {
+            role: 'system',
+            content: `
 Eres un agente telefónico de ventas de JuegaPlus.
 Hablas en español chileno, natural, breve y amable.
 Tu tono debe sonar humano, no robótico.
@@ -127,62 +173,44 @@ IMPORTANTE:
 - Cuando debas transferir a una persona, responde SOLO: TRANSFER_HUMAN
 - Cuando debas enviar WhatsApp, responde SOLO: SEND_WHATSAPP
 - En cualquier otra situación, responde en español chileno y en una sola frase breve.
-      `.trim()
-    },
-    {
-      role: 'user',
-      content: userText
-    }
-  ]
-});
+            `.trim(),
+          },
+          {
+            role: 'user',
+            content: userText,
+          },
+        ],
+      });
 
       const answer = ai.output_text?.trim() || 'Disculpa, ¿puedes repetirlo?';
-console.log('AI answer:', answer);
+      console.log('AI answer:', answer);
 
-// 转人工
-if (answer === 'TRANSFER_HUMAN') {
-  ws.send(JSON.stringify({
-    type: 'text',
-    token: 'Perfecto, te comunico con un asesor ahora mismo.',
-    last: true
-  }));
+      if (answer === 'TRANSFER_HUMAN') {
+        endCall('Perfecto, te comunico con un asesor ahora mismo.');
+        return;
+      }
 
-  setTimeout(() => {
-    ws.send(JSON.stringify({
-      type: 'end'
-    }));
-  }, 1200);
+      if (answer === 'SEND_WHATSAPP') {
+        endCall('Perfecto, te enviaremos la información por WhatsApp en breve.');
+        return;
+      }
 
-  return;
-}
-
-// 发送 WhatsApp
-if (answer === 'SEND_WHATSAPP') {
-  ws.send(JSON.stringify({
-    type: 'text',
-    token: 'Perfecto, te enviaremos la información por WhatsApp en breve.',
-    last: true
-  }));
-
-  setTimeout(() => {
-    ws.send(JSON.stringify({
-      type: 'end'
-    }));
-  }, 1200);
-
-  return;
-}
-
-// 正常回复
-ws.send(JSON.stringify({
-  type: 'text',
-  token: answer,
-  last: true
-}));
-
-  ws.on('close', () => {
-    console.log('Twilio WebSocket disconnected');
+      safeSend(ws, {
+        type: 'text',
+        token: answer,
+        last: true,
+      });
+    } catch (err) {
+      console.error('WS error:', err);
+      safeSend(ws, {
+        type: 'text',
+        token: 'Disculpa, tuve un problema técnico. ¿Puedes repetirlo?',
+        last: true,
+      });
+    }
   });
 });
 
-server.listen(process.env.PORT || 3000);
+server.listen(PORT, () => {
+  console.log(`Server listening on port ${PORT}`);
+});
