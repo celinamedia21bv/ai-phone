@@ -11,6 +11,7 @@ const wss = new WebSocketServer({ noServer: true });
 const PORT = process.env.PORT || 3000;
 const PUBLIC_HOST = process.env.PUBLIC_HOST;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const HUMAN_AGENT_NUMBER = '+56923742126';
 
 if (!PUBLIC_HOST) console.error('Missing PUBLIC_HOST');
 if (!OPENAI_API_KEY) console.error('Missing OPENAI_API_KEY');
@@ -36,7 +37,7 @@ app.post('/voice', (_req, res) => {
 
     const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
-  <Connect>
+  <Connect action="https://${PUBLIC_HOST}/relay-complete" method="POST">
     <ConversationRelay
       url="wss://${PUBLIC_HOST}/ws"
       welcomeGreeting="Hola, te habla Valentina de JuegaPlus. Estamos contactando a algunas personas en Chile para contarles sobre beneficios y promociones disponibles en nuestra plataforma. Es algo súper breve, ¿te puedo explicar en unos segundos?"
@@ -58,6 +59,21 @@ app.post('/voice', (_req, res) => {
   }
 });
 
+app.post('/relay-complete', (req, res) => {
+  console.log('RELAY COMPLETE CALLBACK:', JSON.stringify(req.body));
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice" language="es-CL">
+    Perfecto, te comunico con un asesor de JuegaPlus ahora mismo.
+  </Say>
+  <Dial callerId="+56227300531">${HUMAN_AGENT_NUMBER}</Dial>
+</Response>`;
+
+  res.type('text/xml');
+  res.send(twiml);
+});
+
 server.on('upgrade', (request, socket, head) => {
   console.log('UPGRADE HIT:', request.url);
 
@@ -75,6 +91,19 @@ function safeSend(ws, payload) {
   if (ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify(payload));
   }
+}
+
+function transferToHuman(ws, reason = 'The caller is interested and wants to speak with a human advisor') {
+  console.log('TRANSFERRING TO HUMAN:', reason);
+
+  safeSend(ws, {
+    type: 'end',
+    handoffData: JSON.stringify({
+      reasonCode: 'live-agent-handoff',
+      reason,
+      targetNumber: HUMAN_AGENT_NUMBER,
+    }),
+  });
 }
 
 function normalizeText(text) {
@@ -191,6 +220,7 @@ function isInterestedAfterPromotion(text) {
   return (
     normalized.includes('me interesa') ||
     normalized.includes('si quiero') ||
+    normalized.includes('yo quiero') ||
     normalized.includes('quiero') ||
     normalized.includes('asesor') ||
     normalized.includes('whatsapp') ||
@@ -297,7 +327,7 @@ wss.on('connection', (ws, request) => {
       }
 
       if (promotionExplained && isInterestedAfterPromotion(userText)) {
-        endCall('Perfecto, un asesor de JuegaPlus te contactará en breve para explicártelo mejor. Gracias por tu tiempo.');
+        transferToHuman(ws, 'Caller showed interest after hearing the promotion');
         return;
       }
 
@@ -405,7 +435,7 @@ ${userText}
       const command = normalizeText(answer);
 
       if (command.includes('transfer_human') || command.includes('transer_human')) {
-        endCall('Perfecto, un asesor de JuegaPlus te contactará en breve para explicártelo mejor. Gracias por tu tiempo.');
+        transferToHuman(ws, 'AI classified caller as interested');
         return;
       }
 
