@@ -84,6 +84,19 @@ function safeSend(ws, payload) {
   }
 }
 
+function isVoicemailReply(text) {
+  const normalized = normalizeText(text);
+  return (
+    normalized.includes('servicio de') ||
+    normalized.includes('buzon') ||
+    normalized.includes('buzon de voz') ||
+    normalized.includes('deje su mensaje') ||
+    normalized.includes('mensaje de voz') ||
+    normalized.includes('no se encuentra disponible') ||
+    normalized.includes('despues del tono') ||
+    normalized.includes('casilla de voz')
+  );
+}
 function extractUserText(data) {
   return (
     data.voicePrompt ||
@@ -259,6 +272,12 @@ wss.on('connection', (ws, request) => {
 
       console.log('User said:', userText);
 
+      if (isVoicemailReply(userText)) {
+       console.log('Voicemail detected, ending call');
+       endCall('');
+       return;
+      }
+
       if (isProcessingTurn) {
       console.log('Skipping prompt because already processing');
       return;
@@ -384,25 +403,22 @@ ${userText}
         ],
       });
 
-      const answer =
-        ai.output_text?.trim() ||
-        'Disculpa, ¿te interesa que te cuente una promoción breve?';
+      const command = normalizeText(answer);
 
-      console.log('AI answer:', answer);
+if (command.includes('transfer_human') || command.includes('transer_human')) {
+  endCall('Perfecto, un asesor de JuegaPlus te contactará en breve. Gracias por tu tiempo.');
+  return;
+}
 
-       if (answer === 'TRANSFER_HUMAN') {
-        endCall('Perfecto, un asesor de JuegaPlus te contactará en breve. Gracias por tu   tiempo.');
-       return;
-        }
+if (command.includes('send_whatsapp')) {
+  endCall('Perfecto, te enviaremos la información por WhatsApp en breve.');
+  return;
+}
 
-      if (answer === 'SEND_WHATSAPP') {
-        endCall('Perfecto, te enviaremos la información por WhatsApp en breve.');
-        return;
-      }
-      if (answer === 'END_CALL') {
-       endCall('Entiendo, muchas gracias por tu tiempo. Que tengas un buen día.');
-       return;
-      }
+if (command.includes('end_call')) {
+  endCall('Entiendo, muchas gracias por tu tiempo. Que tengas un buen día.');
+  return;
+}
 
       if (
         answer.toLowerCase().includes('promoción') ||
