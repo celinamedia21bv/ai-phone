@@ -67,7 +67,29 @@ app.post('/relay-complete', (req, res) => {
   <Say voice="alice" language="es-CL">
     Perfecto, te comunico con un asesor de JuegaPlus ahora mismo.
   </Say>
-  <Dial callerId="+56227300531">${HUMAN_AGENT_NUMBER}</Dial>
+  <Dial 
+    callerId="+56227300531"
+    timeout="25"
+    action="https://${PUBLIC_HOST}/dial-complete"
+    method="POST">
+    <Number>+50589338699</Number>
+  </Dial>
+</Response>`;
+
+  console.log('TRANSFER TWIML OUT:', twiml);
+
+  res.type('text/xml');
+  res.send(twiml);
+});
+
+app.post('/dial-complete', (req, res) => {
+  console.log('DIAL COMPLETE CALLBACK:', JSON.stringify(req.body));
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice" language="es-CL">
+    Gracias por tu tiempo. Un asesor te contactará pronto.
+  </Say>
 </Response>`;
 
   res.type('text/xml');
@@ -220,12 +242,18 @@ function isInterestedAfterPromotion(text) {
   return (
     normalized.includes('me interesa') ||
     normalized.includes('si quiero') ||
+    normalized.includes('si por favor') ||
     normalized.includes('yo quiero') ||
     normalized.includes('quiero') ||
+    normalized.includes('ok esta bien') ||
+    normalized.includes('esta bien') ||
+    normalized.includes('dale') ||
     normalized.includes('asesor') ||
-    normalized.includes('whatsapp') ||
+    normalized.includes('comunicarme') ||
     normalized.includes('registrar') ||
-    normalized.includes('registro')
+    normalized.includes('registro') ||
+    normalized.includes('como me registro') ||
+    normalized.includes('whatsapp')
   );
 }
 
@@ -326,10 +354,10 @@ wss.on('connection', (ws, request) => {
         return;
       }
 
-      if (promotionExplained && isInterestedAfterPromotion(userText)) {
-        transferToHuman(ws, 'Caller showed interest after hearing the promotion');
-        return;
-      }
+       if (promotionExplained && (isInterestedAfterPromotion(userText) ||  isPositiveReply(userText))) {
+       transferToHuman(ws, 'Caller showed interest after hearing the promotion');
+       return;
+       }
 
       if (!promotionExplained && isPositiveReply(userText)) {
         promotionExplained = true;
