@@ -12,16 +12,10 @@ const PORT = process.env.PORT || 3000;
 const PUBLIC_HOST = process.env.PUBLIC_HOST;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-if (!PUBLIC_HOST) {
-  console.error('Missing PUBLIC_HOST');
-}
-if (!OPENAI_API_KEY) {
-  console.error('Missing OPENAI_API_KEY');
-}
+if (!PUBLIC_HOST) console.error('Missing PUBLIC_HOST');
+if (!OPENAI_API_KEY) console.error('Missing OPENAI_API_KEY');
 
-const openai = new OpenAI({
-  apiKey: OPENAI_API_KEY,
-});
+const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -45,7 +39,7 @@ app.post('/voice', (_req, res) => {
   <Connect>
     <ConversationRelay
       url="wss://${PUBLIC_HOST}/ws"
-      welcomeGreeting="Hola, te habla Valentina de JuegaPlus. Te llamo porque podrías tener promociones o beneficios disponibles en tu cuenta. ¿Te interesa que te lo explique en unos segundos?"
+      welcomeGreeting="Hola, te habla Valentina de JuegaPlus. Estamos contactando a algunas personas en Chile para contarles sobre beneficios y promociones disponibles en nuestra plataforma. Es algo súper breve, ¿te puedo explicar en unos segundos?"
       language="es-CL"
       transcriptionProvider="Deepgram"
       speechModel="nova-3-general"
@@ -56,7 +50,6 @@ app.post('/voice', (_req, res) => {
 </Response>`;
 
     console.log('TWIML OUT:', twiml);
-
     res.type('text/xml');
     res.send(twiml);
   } catch (err) {
@@ -84,19 +77,16 @@ function safeSend(ws, payload) {
   }
 }
 
-function isVoicemailReply(text) {
-  const normalized = normalizeText(text);
-  return (
-    normalized.includes('servicio de') ||
-    normalized.includes('buzon') ||
-    normalized.includes('buzon de voz') ||
-    normalized.includes('deje su mensaje') ||
-    normalized.includes('mensaje de voz') ||
-    normalized.includes('no se encuentra disponible') ||
-    normalized.includes('despues del tono') ||
-    normalized.includes('casilla de voz')
-  );
+function normalizeText(text) {
+  return (text || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[.,!?;:¡¿]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
+
 function extractUserText(data) {
   return (
     data.voicePrompt ||
@@ -110,21 +100,33 @@ function extractUserText(data) {
   ).trim();
 }
 
+function isVoicemailReply(text) {
+  const normalized = normalizeText(text);
+  return (
+    normalized.includes('servicio de') ||
+    normalized.includes('buzon') ||
+    normalized.includes('buzon de voz') ||
+    normalized.includes('deje su mensaje') ||
+    normalized.includes('mensaje de voz') ||
+    normalized.includes('no se encuentra disponible') ||
+    normalized.includes('despues del tono') ||
+    normalized.includes('casilla de voz')
+  );
+}
+
 function isPositiveReply(text) {
   const normalized = normalizeText(text);
   return (
-    normalized === 'sí' ||
     normalized === 'si' ||
-    normalized.includes('sí') ||
-    normalized.includes('si') ||
     normalized.includes('claro') ||
     normalized.includes('dale') ||
     normalized.includes('bueno') ||
     normalized.includes('ok') ||
     normalized.includes('vale') ||
     normalized.includes('dime') ||
-    normalized.includes('cuéntame') ||
-    normalized.includes('interesa')
+    normalized.includes('cuentame') ||
+    normalized.includes('interesa') ||
+    normalized.includes('explica')
   );
 }
 
@@ -135,7 +137,7 @@ function isNegativeReply(text) {
     normalized.includes('no gracias') ||
     normalized.includes('no me interesa') ||
     normalized.includes('ahora no') ||
-    normalized.includes('después') ||
+    normalized.includes('despues') ||
     normalized.includes('ocupado') ||
     normalized.includes('ocupada') ||
     normalized.includes('no quiero')
@@ -143,25 +145,17 @@ function isNegativeReply(text) {
 }
 
 function soundsUnclear(text) {
-  const normalized = normalizeText(text).trim();
+  const normalized = normalizeText(text);
   return (
     normalized.length <= 1 ||
     normalized === 'ah' ||
     normalized === 'eh' ||
     normalized === 'mm' ||
     normalized === 'mmm' ||
-    normalized === 'hola'
+    normalized === 'hola' ||
+    normalized === 'que' ||
+    normalized === 'que cosa'
   );
-}
-
-function normalizeText(text) {
-  return (text || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[.,!?;:¡¿]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function isEndCallReply(text) {
@@ -198,9 +192,10 @@ function isInterestedAfterPromotion(text) {
     normalized.includes('me interesa') ||
     normalized.includes('si quiero') ||
     normalized.includes('quiero') ||
-    normalized.includes('dale') ||
     normalized.includes('asesor') ||
-    normalized.includes('whatsapp')
+    normalized.includes('whatsapp') ||
+    normalized.includes('registrar') ||
+    normalized.includes('registro')
   );
 }
 
@@ -218,15 +213,17 @@ wss.on('connection', (ws, request) => {
 
     console.log('Ending call with:', farewellText);
 
-    safeSend(ws, {
-      type: 'text',
-      token: farewellText,
-      last: true,
-    });
+    if (farewellText) {
+      safeSend(ws, {
+        type: 'text',
+        token: farewellText,
+        last: true,
+      });
+    }
 
     setTimeout(() => {
       safeSend(ws, { type: 'end' });
-    }, 1000);
+    }, 800);
   };
 
   const timer = setTimeout(() => {
@@ -273,39 +270,34 @@ wss.on('connection', (ws, request) => {
       console.log('User said:', userText);
 
       if (isVoicemailReply(userText)) {
-       console.log('Voicemail detected, ending call');
-       endCall('');
-       return;
+        console.log('Voicemail detected, ending call');
+        endCall('');
+        return;
       }
 
       if (isProcessingTurn) {
-      console.log('Skipping prompt because already processing');
-      return;
-     }
+        console.log('Skipping prompt because already processing');
+        return;
+      }
 
-       isProcessingTurn = true;
+      isProcessingTurn = true;
 
-     if (isEndCallReply(userText)) {
-     endCall('Perfecto, gracias por tu tiempo. Que tengas un buen día.');
-     return;
+      if (isEndCallReply(userText) || isNegativeReply(userText)) {
+        endCall('Entiendo, muchas gracias por tu tiempo. Que tengas un buen día.');
+        return;
       }
 
       if (isConfusedReply(userText)) {
-      safeSend(ws, {
-       type: 'text',
-      token: 'Claro. Te llamo de JuegaPlus porque podrías tener promociones o beneficios d         isponibles en tu cuenta. ¿Te interesa que te cuente?',
-    last: true,
-       });
-      return;
-       }
+        safeSend(ws, {
+          type: 'text',
+          token: 'Claro. Te llamo de JuegaPlus para contarte brevemente sobre beneficios como free spins, bonos por recarga y promociones de la plataforma. ¿Te interesa que te explique?',
+          last: true,
+        });
+        return;
+      }
 
-       if (promotionExplained && isInterestedAfterPromotion(userText)) {
-       endCall('Perfecto, te comunico con un asesor ahora mismo.');
-       return;
-        }
-
-      if (isNegativeReply(userText)) {
-        endCall('Entiendo, muchas gracias por tu tiempo. Que estés muy bien.');
+      if (promotionExplained && isInterestedAfterPromotion(userText)) {
+        endCall('Perfecto, un asesor de JuegaPlus te contactará en breve para explicártelo mejor. Gracias por tu tiempo.');
         return;
       }
 
@@ -314,7 +306,7 @@ wss.on('connection', (ws, request) => {
 
         safeSend(ws, {
           type: 'text',
-          token: 'Perfecto. Actualmente podrías tener acceso a promociones activas, beneficios en recarga, free spins o campañas especiales disponibles dentro de tu cuenta de JuegaPlus. Si te interesa, puedo comunicarte con un asesor ahora mismo.',
+          token: 'Perfecto, te cuento rápido. En JuegaPlus puedes encontrar beneficios como free spins de registro, bonos por recarga con free spins y algunas promociones exclusivas. Si te interesa, un asesor puede explicártelo mejor o ayudarte a registrarte.',
           last: true,
         });
 
@@ -326,7 +318,7 @@ wss.on('connection', (ws, request) => {
 
         safeSend(ws, {
           type: 'text',
-          token: 'Claro. Te cuento súper breve: podrías tener promociones o beneficios disponibles en tu cuenta. ¿Te interesa que te explique en unos segundos?',
+          token: 'Claro. Es algo breve: JuegaPlus tiene beneficios como free spins de registro, bonos por recarga y promociones. ¿Te interesa que te cuente?',
           last: true,
         });
 
@@ -339,56 +331,55 @@ wss.on('connection', (ws, request) => {
           {
             role: 'system',
             content: `
-Eres Valentina, una agente telefónica de JuegaPlus.Podrías tener free spins de registro, bonos por recarga con free spins y beneficios exclusivos.
-Depende de tu cuenta, pero un asesor puede decirte exactamente qué tienes disponible ahora mismo.
-¿Te gustaría que te lo confirme?
+Eres Valentina, una agente telefónica de JuegaPlus.
 
-Hablas en español chileno, de forma natural, breve, amable y humana.
-Tu objetivo es explicar en pocos segundos que el usuario podría tener promociones o beneficios disponibles en su cuenta JuegaPlus.
+Hablas con personas que NO necesariamente son usuarios registrados.
+Tu objetivo es presentar brevemente JuegaPlus y generar interés sin presionar.
 
 CONTEXTO:
-- La bienvenida inicial ya fue dicha por el sistema.
-- No te presentes de nuevo.
-- No repitas frases largas.
+- El usuario puede no conocer JuegaPlus.
+- No asumas que tiene cuenta.
+- No digas que tiene promociones activas en su cuenta.
 - No prometas ganancias.
-- No presiones al usuario.
-- No hables como robot.
+- No uses lenguaje agresivo de venta.
+- No te presentes de nuevo, porque la bienvenida inicial ya fue dicha por el sistema.
+- Habla en español chileno, natural, breve y amable.
+
+PROMOCIÓN / BENEFICIOS GENERALES:
+"En JuegaPlus puedes encontrar beneficios como free spins de registro, bonos por recarga con free spins y promociones exclusivas."
 
 OBJETIVO DE LA LLAMADA:
 1. Confirmar si el usuario quiere escuchar la información.
-2. Si acepta, explicar brevemente que podría tener promociones, beneficios de recarga, free spins o campañas disponibles.
-3. Si el usuario muestra interés después de escuchar la explicación, responde SOLO: TRANSFER_HUMAN
-4. Si el usuario pide WhatsApp, responde SOLO: SEND_WHATSAPP
-5. Si el usuario no entiende, repite de forma más simple.
-6. Si el usuario no quiere, responde SOLO: END_CALL
-
-PROMOCIÓN BASE:
-"Podrías tener promociones activas, beneficios por recarga, free spins o campañas especiales disponibles dentro de tu cuenta JuegaPlus."
+2. Si acepta, explicar brevemente los beneficios generales.
+3. Si muestra interés, responde SOLO: TRANSFER_HUMAN
+4. Si pide WhatsApp, responde SOLO: SEND_WHATSAPP
+5. Si no quiere, responde SOLO: END_CALL
+6. Si no entiende, explica de forma más simple.
 
 RESPUESTAS RECOMENDADAS:
-- Si dice "¿qué cosa?" o "no entendí":
-"Claro, te explico breve. Te llamo de JuegaPlus porque podrías tener beneficios o promociones disponibles en tu cuenta. ¿Te interesa que te cuente?"
+- Si pregunta "¿qué es JuegaPlus?":
+"JuegaPlus es una plataforma online de entretenimiento. Tenemos beneficios como free spins de registro, bonos por recarga y promociones."
 
 - Si dice "sí", "ok", "dime", "claro":
-"Perfecto. Podrías tener promociones activas, beneficios por recarga, free spins o campañas especiales en tu cuenta JuegaPlus."
+"Perfecto. En JuegaPlus puedes encontrar free spins de registro, bonos por recarga con free spins y promociones exclusivas."
 
 - Si pregunta "¿qué promoción?":
-"Depende de tu cuenta, pero puede incluir beneficios por recarga, free spins o campañas activas. Un asesor puede confirmártelo ahora."
-
-- Si pregunta algo complejo:
-TRANSFER_HUMAN
+"Son beneficios generales de la plataforma, como free spins de registro, bonos por recarga y promociones. Un asesor puede explicártelo mejor."
 
 - Si pide WhatsApp:
 SEND_WHATSAPP
 
-- Si dice "no", "no gracias", "no me interesa":
+- Si pregunta algo complejo:
+TRANSFER_HUMAN
+
+- Si dice que no:
 END_CALL
 
 FORMATO:
 - Máximo 1 o 2 frases.
-- Nunca más de 20 palabras salvo que estés aclarando.
-- No uses emojis.
-- No inventes beneficios exactos.
+- No más de 20 palabras por respuesta, salvo aclaración.
+- No inventes montos ni bonos garantizados.
+- No digas que el usuario ya tiene una cuenta.
             `.trim(),
           },
           {
@@ -405,36 +396,35 @@ ${userText}
         ],
       });
 
+      const answer =
+        ai.output_text?.trim() ||
+        'Disculpa, ¿te interesa que te cuente brevemente sobre JuegaPlus?';
 
-const answer =
-  ai.output_text?.trim() ||
-  'Disculpa, ¿te interesa que te cuente una promoción breve?';
+      console.log('AI answer:', answer);
 
-console.log('AI answer:', answer);
+      const command = normalizeText(answer);
 
-const command = normalizeText(answer);
+      if (command.includes('transfer_human') || command.includes('transer_human')) {
+        endCall('Perfecto, un asesor de JuegaPlus te contactará en breve para explicártelo mejor. Gracias por tu tiempo.');
+        return;
+      }
 
-if (command.includes('transfer_human') || command.includes('transer_human')) {
-  endCall('Perfecto, un asesor de JuegaPlus te contactará en breve. Gracias por tu tiempo.');
-  return;
-}
+      if (command.includes('send_whatsapp')) {
+        endCall('Perfecto, te enviaremos la información por WhatsApp en breve. Gracias por tu tiempo.');
+        return;
+      }
 
-if (command.includes('send_whatsapp')) {
-  endCall('Perfecto, te enviaremos la información por WhatsApp en breve.');
-  return;
-}
-
-if (command.includes('end_call')) {
-  endCall('Entiendo, muchas gracias por tu tiempo. Que tengas un buen día.');
-  return;
-}
+      if (command.includes('end_call')) {
+        endCall('Entiendo, muchas gracias por tu tiempo. Que tengas un buen día.');
+        return;
+      }
 
       if (
-        answer.toLowerCase().includes('promoción') ||
-        answer.toLowerCase().includes('beneficio') ||
-        answer.toLowerCase().includes('free spins') ||
-        answer.toLowerCase().includes('recarga') ||
-        answer.toLowerCase().includes('campaña')
+        normalizeText(answer).includes('free spins') ||
+        normalizeText(answer).includes('bonos') ||
+        normalizeText(answer).includes('promociones') ||
+        normalizeText(answer).includes('beneficios') ||
+        normalizeText(answer).includes('recarga')
       ) {
         promotionExplained = true;
       }
@@ -449,7 +439,7 @@ if (command.includes('end_call')) {
 
       safeSend(ws, {
         type: 'text',
-        token: 'Disculpa, tuve un problema técnico. ¿Te interesa que te lo explique muy breve?',
+        token: 'Disculpa, tuve un problema técnico. Gracias por tu tiempo.',
         last: true,
       });
     } finally {
