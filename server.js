@@ -339,7 +339,9 @@ wss.on('connection', (ws, request) => {
           {
             role: 'system',
             content: `
-Eres Valentina, una agente telefónica de JuegaPlus.
+Eres Valentina, una agente telefónica de JuegaPlus.Podrías tener free spins de registro, bonos por recarga con free spins y beneficios exclusivos.
+Depende de tu cuenta, pero un asesor puede decirte exactamente qué tienes disponible ahora mismo.
+¿Te gustaría que te lo confirme?
 
 Hablas en español chileno, de forma natural, breve, amable y humana.
 Tu objetivo es explicar en pocos segundos que el usuario podría tener promociones o beneficios disponibles en su cuenta JuegaPlus.
@@ -403,7 +405,14 @@ ${userText}
         ],
       });
 
-      const command = normalizeText(answer);
+
+const answer =
+  ai.output_text?.trim() ||
+  'Disculpa, ¿te interesa que te cuente una promoción breve?';
+
+console.log('AI answer:', answer);
+
+const command = normalizeText(answer);
 
 if (command.includes('transfer_human') || command.includes('transer_human')) {
   endCall('Perfecto, un asesor de JuegaPlus te contactará en breve. Gracias por tu tiempo.');
