@@ -59,24 +59,51 @@ app.post('/voice', (_req, res) => {
   }
 });
 
-app.post('/relay-complete', (req, res) => {
-  console.log('RELAY COMPLETE CALLBACK:', JSON.stringify(req.body));
+import twilio from 'twilio';
 
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+const client = twilio(
+  process.env.TWILIO_ACCOUNT_SID,
+  process.env.TWILIO_AUTH_TOKEN
+);
+
+app.post('/dial-complete', async (req, res) => {
+  console.log('DIAL COMPLETE CALLBACK:', JSON.stringify(req.body));
+
+  const status = req.body.DialCallStatus;
+  const userNumber = req.body.From; // 用户号码
+
+  // ❌ 人工没接 → 发 WhatsApp
+  if (status !== 'completed') {
+    console.log('AGENT NOT AVAILABLE → SEND WHATSAPP');
+
+    try {
+      await client.messages.create({
+        from: process.env.TWILIO_WHATSAPP_FROM,
+        to: `whatsapp:${userNumber}`,
+        body: 'Hola 👋 Soy Valentina de JuegaPlus. Aquí puedes ver los beneficios y hablar con un asesor: https://wa.me/56923742126?text=Hola,%20quiero%20información%20de%20JuegaPlus'
+      });
+
+      console.log('WHATSAPP SENT:', userNumber);
+
+    } catch (err) {
+      console.error('WHATSAPP ERROR:', err);
+    }
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice" language="es-CL">
-    Perfecto, te comunico con un asesor de JuegaPlus ahora mismo.
+    Nuestro asesor no está disponible ahora. Te enviamos un mensaje por WhatsApp.
   </Say>
-  <Dial 
-    callerId="+56227300531"
-    timeout="25"
-    action="https://${PUBLIC_HOST}/dial-complete"
-    method="POST">
-    <Number>+50589338699</Number>
-  </Dial>
 </Response>`;
 
-  console.log('TRANSFER TWIML OUT:', twiml);
+    res.type('text/xml');
+    res.send(twiml);
+    return;
+  }
+
+  // ✅ 人工接通
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response></Response>`;
 
   res.type('text/xml');
   res.send(twiml);
@@ -211,6 +238,18 @@ function isPositiveReply(text) {
     normalized.includes('cuentame') ||
     normalized.includes('interesa') ||
     normalized.includes('explica')
+  );
+}
+
+function isWeakInterest(text) {
+  const normalized = normalizeText(text);
+  return (
+    normalized === 'si' ||
+    normalized === 'ok' ||
+    normalized.includes('esta bien') ||
+    normalized.includes('aja') ||
+    normalized.includes('mas info') ||
+    normalized.includes('que es')
   );
 }
 
@@ -416,7 +455,19 @@ wss.on('connection', (ws, request) => {
         return;
       }
 
-      const ai = await openai.responses.create({
+      if (promotionExplained && isWeakInterest(userText)) {
+       endCall(
+      'Perfecto, te puedo enviar la información por WhatsApp para que la revises con calma.'
+      );
+
+      console.log('WHATSAPP WEAK LEAD:', {
+      number: data.from,
+       });
+
+  return;
+}
+     
+        const ai = await openai.responses.create({
         model: 'gpt-4.1-mini',
         input: [
           {
