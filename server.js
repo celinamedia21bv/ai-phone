@@ -82,15 +82,48 @@ app.post('/relay-complete', (req, res) => {
   res.send(twiml);
 });
 
-app.post('/dial-complete', (req, res) => {
-  console.log('DIAL COMPLETE CALLBACK:', JSON.stringify(req.body));
+app.post('/relay-complete', (req, res) => {
+  console.log('RELAY COMPLETE CALLBACK:', JSON.stringify(req.body));
+
+  let handoff = null;
+
+  try {
+    handoff = req.body.HandoffData ? JSON.parse(req.body.HandoffData) : null;
+  } catch (err) {
+    console.error('Invalid HandoffData:', req.body.HandoffData);
+  }
+
+  const shouldTransfer =
+    handoff &&
+    handoff.reasonCode === 'live-agent-handoff';
+
+  if (!shouldTransfer) {
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Hangup/>
+</Response>`;
+
+    console.log('NO HANDOFF DATA - NOT TRANSFERRING');
+    res.type('text/xml');
+    res.send(twiml);
+    return;
+  }
 
   const twiml = `<?xml version="1.0" encoding="UTF-8"?>
 <Response>
   <Say voice="alice" language="es-CL">
-    Gracias por tu tiempo. Un asesor te contactará pronto.
+    Perfecto, te comunico con un asesor de JuegaPlus ahora mismo.
   </Say>
+  <Dial
+    callerId="+56227300531"
+    timeout="25"
+    action="https://${PUBLIC_HOST}/dial-complete"
+    method="POST">
+    <Number>+56923742126</Number>
+  </Dial>
 </Response>`;
+
+  console.log('TRANSFER TWIML OUT:', twiml);
 
   res.type('text/xml');
   res.send(twiml);
