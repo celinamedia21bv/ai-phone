@@ -3,6 +3,7 @@ import express from 'express';
 import http from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
 import OpenAI from 'openai';
+import twilio from 'twilio';
 
 const app = express();
 const server = http.createServer(app);
@@ -11,12 +12,25 @@ const wss = new WebSocketServer({ noServer: true });
 const PORT = process.env.PORT || 3000;
 const PUBLIC_HOST = process.env.PUBLIC_HOST;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
 const HUMAN_AGENT_NUMBER = '+56923742126';
+const TWILIO_CALLER_ID = '+56227300531';
+const WHATSAPP_TEMPLATE_SID = 'HX236771f477ff6d7708ccbfce736f440c';
+const WHATSAPP_LINK =
+  'https://wa.me/56923742126?text=Hola,%20quiero%20información%20sobre%20JuegaPlus';
 
 if (!PUBLIC_HOST) console.error('Missing PUBLIC_HOST');
 if (!OPENAI_API_KEY) console.error('Missing OPENAI_API_KEY');
+if (!process.env.TWILIO_ACCOUNT_SID) console.error('Missing TWILIO_ACCOUNT_SID');
+if (!process.env.TWILIO_AUTH_TOKEN) console.error('Missing TWILIO_AUTH_TOKEN');
+if (!process.env.TWILIO_WHATSAPP_FROM) console.error('Missing TWILIO_WHATSAPP_FROM');
 
 const openai = new OpenAI({ apiKey: OPENAI_API_KEY });
+
+const twilioClient =
+  process.env.TWILIO_ACCOUNT_SID && process.env.TWILIO_AUTH_TOKEN
+    ? twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN)
+    : null;
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
@@ -29,6 +43,46 @@ app.post('/call-status', (req, res) => {
   console.log('CALL STATUS CALLBACK:', JSON.stringify(req.body));
   res.sendStatus(200);
 });
+
+async function sendWhatsApp(toNumber, reason = 'follow-up') {
+  if (!twilioClient) {
+    console.log('Twilio WhatsApp client not configured');
+    return false;
+  }
+
+  if (!process.env.TWILIO_WHATSAPP_FROM) {
+    console.log('TWILIO_WHATSAPP_FROM not configured');
+    return false;
+  }
+
+  if (!toNumber) {
+    console.log('Missing WhatsApp recipient number');
+    return false;
+  }
+
+  const cleanNumber = toNumber.startsWith('+') ? toNumber : `+${toNumber}`;
+
+  try {
+    await twilioClient.messages.create({
+      from: process.env.TWILIO_WHATSAPP_FROM,
+      to: `whatsapp:${cleanNumber}`,
+      contentSid: WHATSAPP_TEMPLATE_SID,
+      contentVariables: JSON.stringify({
+        '1': WHATSAPP_LINK,
+      }),
+    });
+
+    console.log('WHATSAPP SENT:', {
+      to: cleanNumber,
+      reason,
+    });
+
+    return true;
+  } catch (err) {
+    console.error('WHATSAPP ERROR:', err);
+    return false;
+  }
+}
 
 app.post('/voice', (_req, res) => {
   try {
@@ -57,56 +111,6 @@ app.post('/voice', (_req, res) => {
     console.error('/voice error:', err);
     res.status(500).send('voice route failed');
   }
-});
-
-import twilio from 'twilio';
-
-const client = twilio(
-  process.env.TWILIO_ACCOUNT_SID,
-  process.env.TWILIO_AUTH_TOKEN
-);
-
-app.post('/dial-complete', async (req, res) => {
-  console.log('DIAL COMPLETE CALLBACK:', JSON.stringify(req.body));
-
-  const status = req.body.DialCallStatus;
-  const userNumber = req.body.From; // 用户号码
-
-  // ❌ 人工没接 → 发 WhatsApp
-  if (status !== 'completed') {
-    console.log('AGENT NOT AVAILABLE → SEND WHATSAPP');
-
-    try {
-      await client.messages.create({
-        from: process.env.TWILIO_WHATSAPP_FROM,
-        to: `whatsapp:${userNumber}`,
-        body: 'Hola 👋 Soy Valentina de JuegaPlus. Aquí puedes ver los beneficios y hablar con un asesor: https://wa.me/56923742126?text=Hola,%20quiero%20información%20de%20JuegaPlus'
-      });
-
-      console.log('WHATSAPP SENT:', userNumber);
-
-    } catch (err) {
-      console.error('WHATSAPP ERROR:', err);
-    }
-
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-  <Say voice="alice" language="es-CL">
-    Nuestro asesor no está disponible ahora. Te enviamos un mensaje por WhatsApp.
-  </Say>
-</Response>`;
-
-    res.type('text/xml');
-    res.send(twiml);
-    return;
-  }
-
-  // ✅ 人工接通
-  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response></Response>`;
-
-  res.type('text/xml');
-  res.send(twiml);
 });
 
 app.post('/relay-complete', (req, res) => {
@@ -142,15 +146,47 @@ app.post('/relay-complete', (req, res) => {
     Perfecto, te comunico con un asesor de JuegaPlus ahora mismo.
   </Say>
   <Dial
-    callerId="+56227300531"
+    callerId="${TWILIO_CALLER_ID}"
     timeout="25"
     action="https://${PUBLIC_HOST}/dial-complete"
     method="POST">
-    <Number>+56923742126</Number>
+    <Number>${HUMAN_AGENT_NUMBER}</Number>
   </Dial>
 </Response>`;
 
   console.log('TRANSFER TWIML OUT:', twiml);
+
+  res.type('text/xml');
+  res.send(twiml);
+});
+
+app.post('/dial-complete', async (req, res) => {
+  console.log('DIAL COMPLETE CALLBACK:', JSON.stringify(req.body));
+
+  const status = req.body.DialCallStatus;
+
+  // 对这通外呼来说，To 通常是原始被叫客户号码
+  const customerNumber = req.body.To;
+
+  if (status !== 'completed') {
+    console.log('AGENT NOT AVAILABLE → SEND WHATSAPP');
+
+    await sendWhatsApp(customerNumber, 'agent-not-available');
+
+    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="alice" language="es-CL">
+    Nuestro asesor no está disponible ahora. Te enviaremos la información por WhatsApp.
+  </Say>
+</Response>`;
+
+    res.type('text/xml');
+    res.send(twiml);
+    return;
+  }
+
+  const twiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response></Response>`;
 
   res.type('text/xml');
   res.send(twiml);
@@ -309,6 +345,20 @@ function isConfusedReply(text) {
   );
 }
 
+function isWhatsAppRequest(text) {
+  const normalized = normalizeText(text);
+  return (
+    normalized.includes('whatsapp') ||
+    normalized.includes('guasap') ||
+    normalized.includes('wasap') ||
+    normalized.includes('mandame') ||
+    normalized.includes('enviame') ||
+    normalized.includes('por mensaje') ||
+    normalized.includes('manda el link') ||
+    normalized.includes('link')
+  );
+}
+
 function isInterestedAfterPromotion(text) {
   const normalized = normalizeText(text);
   return (
@@ -324,8 +374,7 @@ function isInterestedAfterPromotion(text) {
     normalized.includes('comunicarme') ||
     normalized.includes('registrar') ||
     normalized.includes('registro') ||
-    normalized.includes('como me registro') ||
-    normalized.includes('whatsapp')
+    normalized.includes('como me registro')
   );
 }
 
@@ -336,6 +385,7 @@ wss.on('connection', (ws, request) => {
   let clarificationCount = 0;
   let callEnded = false;
   let isProcessingTurn = false;
+  let customerNumber = null;
 
   const endCall = (farewellText = 'Gracias por tu tiempo. Hasta luego.') => {
     if (callEnded) return;
@@ -378,12 +428,14 @@ wss.on('connection', (ws, request) => {
       const data = JSON.parse(raw);
       console.log('WS IN:', JSON.stringify(data));
 
-      if (callEnded) return;
-
       if (data.type === 'setup') {
+        customerNumber = data.to || null;
+        console.log('Customer number set:', customerNumber);
         console.log('Ignoring setup event');
         return;
       }
+
+      if (callEnded) return;
 
       if (data.type === 'interrupt') {
         console.log('Ignoring interrupt event');
@@ -426,10 +478,24 @@ wss.on('connection', (ws, request) => {
         return;
       }
 
-       if (promotionExplained && (isInterestedAfterPromotion(userText) ||  isPositiveReply(userText))) {
-       transferToHuman(ws, 'Caller showed interest after hearing the promotion');
-       return;
-       }
+      if (promotionExplained && isWhatsAppRequest(userText)) {
+        await sendWhatsApp(customerNumber, 'caller-requested-whatsapp');
+
+        endCall('Perfecto, te enviaremos la información por WhatsApp para que la revises con calma.');
+        return;
+      }
+
+      if (promotionExplained && isInterestedAfterPromotion(userText)) {
+        transferToHuman(ws, 'Caller showed interest after hearing the promotion');
+        return;
+      }
+
+      if (promotionExplained && isWeakInterest(userText)) {
+        await sendWhatsApp(customerNumber, 'weak-interest');
+
+        endCall('Perfecto, te enviaremos la información por WhatsApp para que la revises con calma.');
+        return;
+      }
 
       if (!promotionExplained && isPositiveReply(userText)) {
         promotionExplained = true;
@@ -455,19 +521,7 @@ wss.on('connection', (ws, request) => {
         return;
       }
 
-      if (promotionExplained && isWeakInterest(userText)) {
-       endCall(
-      'Perfecto, te puedo enviar la información por WhatsApp para que la revises con calma.'
-      );
-
-      console.log('WHATSAPP WEAK LEAD:', {
-      number: data.from,
-       });
-
-  return;
-}
-     
-        const ai = await openai.responses.create({
+      const ai = await openai.responses.create({
         model: 'gpt-4.1-mini',
         input: [
           {
@@ -493,7 +547,7 @@ PROMOCIÓN / BENEFICIOS GENERALES:
 OBJETIVO DE LA LLAMADA:
 1. Confirmar si el usuario quiere escuchar la información.
 2. Si acepta, explicar brevemente los beneficios generales.
-3. Si muestra interés, responde SOLO: TRANSFER_HUMAN
+3. Si muestra interés fuerte, responde SOLO: TRANSFER_HUMAN
 4. Si pide WhatsApp, responde SOLO: SEND_WHATSAPP
 5. Si no quiere, responde SOLO: END_CALL
 6. Si no entiende, explica de forma más simple.
@@ -552,7 +606,9 @@ ${userText}
       }
 
       if (command.includes('send_whatsapp')) {
-        endCall('Perfecto, te enviaremos la información por WhatsApp en breve. Gracias por tu tiempo.');
+        await sendWhatsApp(customerNumber, 'ai-whatsapp-request');
+
+        endCall('Perfecto, te enviaremos la información por WhatsApp para que la revises con calma.');
         return;
       }
 
